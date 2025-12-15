@@ -20,16 +20,26 @@ build/
 *.swp
 *.swo
 
-# Google Cloud credentials
+# Google Cloud credentials and API keys
 *.json
+google-credentials.json
+gen-lang-client*
 !requirements.txt
+.env
+.env.local
 
 # Anki decks output
 *.apkg
+Vietnamese_Core_2000.apkg
 
 # Generated data files (uncomment if you don't want to track them)
 # raw_lemmas.csv
 # *.csv
+
+# Generated audio files
+audio/
+audio_test/
+*.mp3
 
 # OS
 .DS_Store
