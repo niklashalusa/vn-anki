@@ -319,7 +319,8 @@ def create_anki_deck(
                 rank_num = int(rank)
                 subdeck_start = ((rank_num - 1) // 100) * 100 + 1
                 subdeck_end = subdeck_start + 99
-                subdeck_name = f"{deck_name}::{subdeck_start:04d}-{subdeck_end:04d}"
+                tier = ((rank_num - 1) // 100) + 1  # 1-20
+                subdeck_name = f"{deck_name}::{tier:02d} - Words {subdeck_start}-{subdeck_end}"
                 
                 if subdeck_name not in subdecks:
                     subdeck_id = random.randrange(1 << 30, 1 << 31)
