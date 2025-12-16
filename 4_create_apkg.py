@@ -61,6 +61,7 @@ VIETNAMESE_MODEL = genanki.Model(
         {'name': 'Sentence_VI'},
         {'name': 'Sentence_EN'},
         {'name': 'POS'},
+        {'name': 'UsageNote'},  # Practical grammar guidance
     ],
     templates=[
         {
@@ -69,6 +70,7 @@ VIETNAMESE_MODEL = genanki.Model(
                 <div class="card">
                     <div class="definition">{{Definition}}</div>
                     <div class="pos">{{POS}}</div>
+                    {{#UsageNote}}<div class="usage-note">{{UsageNote}}</div>{{/UsageNote}}
                 </div>
             ''',
             'afmt': '''
@@ -128,6 +130,18 @@ VIETNAMESE_MODEL = genanki.Model(
             font-size: 18px;
             color: #666;
             margin: 10px 0;
+        }
+        
+        .usage-note {
+            font-size: 16px;
+            color: #555;
+            margin: 15px 0;
+            padding: 12px;
+            background-color: #e8f5e9;
+            border-radius: 6px;
+            border-left: 3px solid #4CAF50;
+            text-align: left;
+            font-style: italic;
         }
         
         .example {
@@ -226,11 +240,8 @@ def create_anki_deck(
     media_files = []
     audio_path = Path(audio_dir)
     
-    # Dictionary to hold subdecks
-    subdecks = {}
-    
     # Create notes
-    print(f"\n📝 Creating Anki notes and organizing into subdecks...")
+    print(f"\n📝 Creating Anki notes with frequency tags...")
     notes_created = 0
     notes_failed = 0
     polysemy_count = 0
@@ -247,6 +258,7 @@ def create_anki_deck(
             sentence_vi = word.get('example_vi', '')
             sentence_en = word.get('example_en', '')
             audio_path_str = word.get('Audio_Path', '')
+            usage_note = word.get('Usage_Note', '')
             
             # Skip if essential data is missing
             if not lemma or not definition:
@@ -299,6 +311,17 @@ def create_anki_deck(
                         if str(full_audio_path) not in media_files:
                             media_files.append(str(full_audio_path))
             
+            # Calculate frequency bucket tag (Anki tags cannot contain spaces)
+            try:
+                rank_num = int(rank)
+                bucket_start = ((rank_num - 1) // 100) * 100 + 1
+                bucket_end = bucket_start + 99
+                frequency_tag = f"{bucket_start}-{bucket_end}_Most_Frequent"
+                tags = ['vietnamese', 'core-vocabulary', frequency_tag]
+            except ValueError:
+                # If rank isn't a number, use default tags
+                tags = ['vietnamese', 'core-vocabulary']
+            
             # Create note with field structure
             note = genanki.Note(
                 model=VIETNAMESE_MODEL,
@@ -310,27 +333,13 @@ def create_anki_deck(
                     sentence_vi,     # Sentence_VI
                     sentence_en,     # Sentence_EN
                     pos,             # POS
+                    usage_note,      # UsageNote (grammar guidance)
                 ],
-                tags=['vietnamese', 'core-vocabulary', f'rank-{rank}']
+                tags=tags
             )
             
-            # Add to appropriate subdeck based on rank
-            try:
-                rank_num = int(rank)
-                subdeck_start = ((rank_num - 1) // 100) * 100 + 1
-                subdeck_end = subdeck_start + 99
-                tier = ((rank_num - 1) // 100) + 1  # 1-20
-                subdeck_name = f"{deck_name}::{tier:02d} - Words {subdeck_start}-{subdeck_end}"
-                
-                if subdeck_name not in subdecks:
-                    subdeck_id = random.randrange(1 << 30, 1 << 31)
-                    subdecks[subdeck_name] = genanki.Deck(subdeck_id, subdeck_name)
-                    subdecks[subdeck_name].description = f"Words ranked {subdeck_start}-{subdeck_end} by frequency"
-                
-                subdecks[subdeck_name].add_note(note)
-            except ValueError:
-                # If rank isn't a number, add to main deck
-                deck.add_note(note)
+            # Add to main deck
+            deck.add_note(note)
             notes_created += 1
             
             if i % 100 == 0:
@@ -341,16 +350,15 @@ def create_anki_deck(
             notes_failed += 1
     
     print(f"\n✓ Created {notes_created} notes")
-    print(f"📁 Organized into {len(subdecks)} subdecks (100 words each)")
+    print(f"🏷️  Tagged with frequency buckets (100 words per bucket)")
     if polysemy_count > 0:
         print(f"🔀 Including {polysemy_count} polysemy entries")
     if notes_failed > 0:
         print(f"⚠️  Failed to create {notes_failed} notes")
     
-    # Create package with all subdecks
-    print(f"\n📦 Packaging {len(subdecks)} subdecks with {len(media_files)} audio files...")
-    all_decks = list(subdecks.values())
-    package = genanki.Package(all_decks)
+    # Create package with main deck
+    print(f"\n📦 Packaging deck with {len(media_files)} audio files...")
+    package = genanki.Package(deck)
     package.media_files = media_files
     
     # Write package
@@ -363,9 +371,9 @@ def create_anki_deck(
     print("="*60)
     print(f"📦 Output file: {output_file}")
     print(f"📊 Total notes: {notes_created}")
-    print(f"📁 Subdecks: {len(subdecks)} (100 words each)")
+    print(f"🏷️  Deck name: {deck_name}")
+    print(f"🔖 Tagged by frequency buckets (100 words per tag)")
     print(f"🔊 Audio files: {len(media_files)}")
-    print(f"🏷️  Parent deck: {deck_name}")
     
     # File size
     if os.path.exists(output_file):
