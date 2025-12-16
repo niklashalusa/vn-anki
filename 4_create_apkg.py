@@ -61,7 +61,6 @@ VIETNAMESE_MODEL = genanki.Model(
         {'name': 'Sentence_VI'},
         {'name': 'Sentence_EN'},
         {'name': 'POS'},
-        {'name': 'SenseInfo'},  # e.g., "sense 1 of 3"
     ],
     templates=[
         {
@@ -70,7 +69,6 @@ VIETNAMESE_MODEL = genanki.Model(
                 <div class="card">
                     <div class="definition">{{Definition}}</div>
                     <div class="pos">{{POS}}</div>
-                    {{#SenseInfo}}<div class="sense-info">{{SenseInfo}}</div>{{/SenseInfo}}
                 </div>
             ''',
             'afmt': '''
@@ -160,13 +158,6 @@ VIETNAMESE_MODEL = genanki.Model(
             margin: 20px 0;
         }
         
-        .sense-info {
-            font-size: 14px;
-            color: #999;
-            margin: 5px 0;
-            font-style: italic;
-        }
-        
         .lemma sup {
             font-size: 0.5em;
             color: #999;
@@ -235,8 +226,11 @@ def create_anki_deck(
     media_files = []
     audio_path = Path(audio_dir)
     
+    # Dictionary to hold subdecks
+    subdecks = {}
+    
     # Create notes
-    print(f"\n📝 Creating Anki notes...")
+    print(f"\n📝 Creating Anki notes and organizing into subdecks...")
     notes_created = 0
     notes_failed = 0
     polysemy_count = 0
@@ -269,11 +263,9 @@ def create_anki_deck(
             # Format lemma for display (convert subscripts to superscripts)
             lemma_display = format_lemma_display(lemma)
             
-            # Create sense info string if polysemous
-            sense_info = ""
+            # Track polysemy for stats
             try:
                 if int(total_senses) > 1:
-                    sense_info = f"sense {sense_number} of {total_senses}"
                     polysemy_count += 1
             except:
                 pass
@@ -307,7 +299,7 @@ def create_anki_deck(
                         if str(full_audio_path) not in media_files:
                             media_files.append(str(full_audio_path))
             
-            # Create note with new field structure
+            # Create note with field structure
             note = genanki.Note(
                 model=VIETNAMESE_MODEL,
                 fields=[
@@ -318,12 +310,26 @@ def create_anki_deck(
                     sentence_vi,     # Sentence_VI
                     sentence_en,     # Sentence_EN
                     pos,             # POS
-                    sense_info,      # SenseInfo
                 ],
                 tags=['vietnamese', 'core-vocabulary', f'rank-{rank}']
             )
             
-            deck.add_note(note)
+            # Add to appropriate subdeck based on rank
+            try:
+                rank_num = int(rank)
+                subdeck_start = ((rank_num - 1) // 100) * 100 + 1
+                subdeck_end = subdeck_start + 99
+                subdeck_name = f"{deck_name}::{subdeck_start:04d}-{subdeck_end:04d}"
+                
+                if subdeck_name not in subdecks:
+                    subdeck_id = random.randrange(1 << 30, 1 << 31)
+                    subdecks[subdeck_name] = genanki.Deck(subdeck_id, subdeck_name)
+                    subdecks[subdeck_name].description = f"Words ranked {subdeck_start}-{subdeck_end} by frequency"
+                
+                subdecks[subdeck_name].add_note(note)
+            except ValueError:
+                # If rank isn't a number, add to main deck
+                deck.add_note(note)
             notes_created += 1
             
             if i % 100 == 0:
@@ -334,14 +340,16 @@ def create_anki_deck(
             notes_failed += 1
     
     print(f"\n✓ Created {notes_created} notes")
+    print(f"📁 Organized into {len(subdecks)} subdecks (100 words each)")
     if polysemy_count > 0:
         print(f"🔀 Including {polysemy_count} polysemy entries")
     if notes_failed > 0:
         print(f"⚠️  Failed to create {notes_failed} notes")
     
-    # Create package
-    print(f"\n📦 Packaging deck with {len(media_files)} audio files...")
-    package = genanki.Package(deck)
+    # Create package with all subdecks
+    print(f"\n📦 Packaging {len(subdecks)} subdecks with {len(media_files)} audio files...")
+    all_decks = list(subdecks.values())
+    package = genanki.Package(all_decks)
     package.media_files = media_files
     
     # Write package
@@ -354,8 +362,9 @@ def create_anki_deck(
     print("="*60)
     print(f"📦 Output file: {output_file}")
     print(f"📊 Total notes: {notes_created}")
+    print(f"📁 Subdecks: {len(subdecks)} (100 words each)")
     print(f"🔊 Audio files: {len(media_files)}")
-    print(f"🏷️  Deck name: {deck_name}")
+    print(f"🏷️  Parent deck: {deck_name}")
     
     # File size
     if os.path.exists(output_file):
