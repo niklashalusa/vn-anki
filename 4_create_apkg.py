@@ -5,14 +5,48 @@ Create Anki deck package (.apkg) from enriched Vietnamese word data.
 This script reads the enriched CSV data and audio files, then generates
 a complete Anki deck package ready for import.
 
+Handles polysemy notation (để₁, để₂) by displaying the sense number
+as a superscript on the card.
+
 Output: Vietnamese_Core_2000.apkg
 """
 
 import csv
 import os
+import re
 from pathlib import Path
 import genanki
 import random
+
+
+def format_lemma_display(lemma: str) -> str:
+    """
+    Format lemma for display, converting subscript numbers to superscript HTML.
+    
+    Example: để₁ → để<sup>1</sup>
+    """
+    # Map subscript digits to regular digits
+    subscript_map = {
+        '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4',
+        '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9'
+    }
+    
+    result = lemma
+    for sub, digit in subscript_map.items():
+        if sub in result:
+            result = result.replace(sub, f'<sup>{digit}</sup>')
+    
+    return result
+
+
+def get_base_word(lemma: str) -> str:
+    """
+    Get the base word without sense subscripts.
+    
+    Example: để₁ → để
+    """
+    # Remove subscript digits
+    return re.sub(r'[₀₁₂₃₄₅₆₇₈₉]', '', lemma)
 
 
 # Define custom Anki Note Model
@@ -21,29 +55,30 @@ VIETNAMESE_MODEL = genanki.Model(
     'Vietnamese Core Vocabulary',
     fields=[
         {'name': 'Lemma'},
+        {'name': 'LemmaDisplay'},  # HTML formatted version
         {'name': 'Definition'},
         {'name': 'Audio'},
         {'name': 'Sentence_VI'},
         {'name': 'Sentence_EN'},
         {'name': 'POS'},
+        {'name': 'SenseInfo'},  # e.g., "sense 1 of 3"
     ],
     templates=[
         {
-            'name': 'Vietnamese → English',
+            'name': 'English → Vietnamese (Recall)',
             'qfmt': '''
                 <div class="card">
-                    <div class="lemma">{{Lemma}}</div>
-                    <div class="audio">{{Audio}}</div>
+                    <div class="definition">{{Definition}}</div>
                     <div class="pos">{{POS}}</div>
+                    {{#SenseInfo}}<div class="sense-info">{{SenseInfo}}</div>{{/SenseInfo}}
                 </div>
             ''',
             'afmt': '''
                 <div class="card">
-                    <div class="lemma">{{Lemma}}</div>
-                    <div class="audio">{{Audio}}</div>
-                    <div class="pos">{{POS}}</div>
+                    <div class="definition-small">{{Definition}}</div>
                     <hr id="answer">
-                    <div class="definition">{{Definition}}</div>
+                    <div class="lemma">{{LemmaDisplay}}</div>
+                    <div class="audio">{{Audio}}</div>
                     <div class="example">
                         <div class="example-vi">{{Sentence_VI}}</div>
                         <div class="example-en">{{Sentence_EN}}</div>
@@ -83,13 +118,18 @@ VIETNAMESE_MODEL = genanki.Model(
         }
         
         .definition {
-            font-size: 24px;
-            font-weight: 500;
-            color: #4CAF50;
-            margin: 20px 0;
-            padding: 15px;
-            background-color: #f5f5f5;
-            border-radius: 8px;
+            font-size: 36px;
+            font-weight: bold;
+            color: #333;
+            margin: 30px 0;
+            padding: 20px;
+            line-height: 1.3;
+        }
+        
+        .definition-small {
+            font-size: 18px;
+            color: #666;
+            margin: 10px 0;
         }
         
         .example {
@@ -118,6 +158,19 @@ VIETNAMESE_MODEL = genanki.Model(
             border: none;
             border-top: 2px solid #e0e0e0;
             margin: 20px 0;
+        }
+        
+        .sense-info {
+            font-size: 14px;
+            color: #999;
+            margin: 5px 0;
+            font-style: italic;
+        }
+        
+        .lemma sup {
+            font-size: 0.5em;
+            color: #999;
+            vertical-align: super;
         }
         
         /* Mobile responsiveness */
@@ -186,11 +239,15 @@ def create_anki_deck(
     print(f"\n📝 Creating Anki notes...")
     notes_created = 0
     notes_failed = 0
+    polysemy_count = 0
     
     for i, word in enumerate(words, 1):
         try:
             rank = word.get('Rank', '')
             lemma = word.get('lemma', '')
+            original_word = word.get('original_word', lemma)
+            sense_number = word.get('sense_number', '1')
+            total_senses = word.get('total_senses', '1')
             definition = word.get('english_definition', '')
             pos = word.get('pos', '')
             sentence_vi = word.get('example_vi', '')
@@ -203,28 +260,65 @@ def create_anki_deck(
                 notes_failed += 1
                 continue
             
-            # Extract audio filename from Anki format [sound:filename.mp3]
-            audio_filename = ""
-            if audio_path_str:
-                # Extract filename from [sound:filename.mp3]
-                if audio_path_str.startswith('[sound:') and audio_path_str.endswith(']'):
-                    audio_filename = audio_path_str[7:-1]  # Remove [sound: and ]
-                    
-                    # Check if audio file exists
-                    full_audio_path = audio_path / audio_filename
-                    if full_audio_path.exists() and str(full_audio_path) not in media_files:
-                        media_files.append(str(full_audio_path))
+            # Skip entries marked for review
+            if definition == '[needs review]':
+                print(f"⚠️  Skipping word {rank} ({lemma}): Needs review")
+                notes_failed += 1
+                continue
             
-            # Create note
+            # Format lemma for display (convert subscripts to superscripts)
+            lemma_display = format_lemma_display(lemma)
+            
+            # Create sense info string if polysemous
+            sense_info = ""
+            try:
+                if int(total_senses) > 1:
+                    sense_info = f"sense {sense_number} of {total_senses}"
+                    polysemy_count += 1
+            except:
+                pass
+            
+            # Get base word for audio file lookup
+            base_word = get_base_word(lemma)
+            
+            # Look for audio file (may be based on original_word or base_word)
+            audio_anki_format = ""
+            for audio_base in [original_word, base_word, lemma]:
+                if not audio_base:
+                    continue
+                # Sanitize for filename
+                safe_name = audio_base.replace(' ', '_').replace('/', '_')
+                audio_filename = f"{rank}_{safe_name}.mp3"
+                full_audio_path = audio_path / audio_filename
+                
+                if full_audio_path.exists():
+                    audio_anki_format = f"[sound:{audio_filename}]"
+                    if str(full_audio_path) not in media_files:
+                        media_files.append(str(full_audio_path))
+                    break
+            
+            # Also check for audio path in CSV
+            if not audio_anki_format and audio_path_str:
+                if audio_path_str.startswith('[sound:') and audio_path_str.endswith(']'):
+                    audio_filename = audio_path_str[7:-1]
+                    full_audio_path = audio_path / audio_filename
+                    if full_audio_path.exists():
+                        audio_anki_format = audio_path_str
+                        if str(full_audio_path) not in media_files:
+                            media_files.append(str(full_audio_path))
+            
+            # Create note with new field structure
             note = genanki.Note(
                 model=VIETNAMESE_MODEL,
                 fields=[
-                    lemma,
-                    definition,
-                    audio_path_str,  # Keep in [sound:filename] format for Anki
-                    sentence_vi,
-                    sentence_en,
-                    pos,
+                    lemma,           # Lemma (raw)
+                    lemma_display,   # LemmaDisplay (HTML formatted)
+                    definition,      # Definition
+                    audio_anki_format,  # Audio
+                    sentence_vi,     # Sentence_VI
+                    sentence_en,     # Sentence_EN
+                    pos,             # POS
+                    sense_info,      # SenseInfo
                 ],
                 tags=['vietnamese', 'core-vocabulary', f'rank-{rank}']
             )
@@ -240,6 +334,8 @@ def create_anki_deck(
             notes_failed += 1
     
     print(f"\n✓ Created {notes_created} notes")
+    if polysemy_count > 0:
+        print(f"🔀 Including {polysemy_count} polysemy entries")
     if notes_failed > 0:
         print(f"⚠️  Failed to create {notes_failed} notes")
     

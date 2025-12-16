@@ -189,33 +189,57 @@ def generate_audio_files(
     print(f"Loaded {len(words)} words")
     print(f"Using voice: {voice_name}")
     
+    # Track audio files we've already generated (for polysemy - same base word)
+    generated_audio = {}  # base_word -> audio_filename
+    
     # Process each word
     success_count = 0
     fail_count = 0
+    reused_count = 0
     
     for i, word in enumerate(words, 1):
         rank = word['Rank']
         lemma = word['lemma']
         
-        # Create filename
-        # Sanitize lemma for filename (remove spaces and special chars)
-        safe_lemma = lemma.replace(' ', '_').replace('/', '_')
-        filename = f"{rank}_{safe_lemma}.mp3"
+        # Get base word for TTS (remove subscript notation)
+        # e.g., "để₁" → "để", but keep compounds like "thức ăn"
+        import re
+        base_word = re.sub(r'[₀₁₂₃₄₅₆₇₈₉]', '', lemma)
+        
+        # Also check for original_word field
+        original_word = word.get('original_word', base_word)
+        if original_word:
+            base_word = original_word
+        
+        # Create filename based on rank and base word
+        safe_word = base_word.replace(' ', '_').replace('/', '_')
+        filename = f"{rank}_{safe_word}.mp3"
         output_path = audio_path / filename
         
-        # Skip if file already exists
-        if output_path.exists():
-            print(f"[{i}/{len(words)}] Skipping {lemma} (file exists)")
-            word['Audio_Path'] = f"[sound:{filename}]"
+        # Check if we already have audio for this base word (polysemy case)
+        if base_word in generated_audio:
+            # Reuse existing audio file reference
+            word['Audio_Path'] = generated_audio[base_word]
+            print(f"[{i}/{len(words)}] Reusing audio for: {lemma} (same as {base_word})")
+            reused_count += 1
             success_count += 1
             continue
         
-        # Generate audio
-        print(f"[{i}/{len(words)}] Generating audio for: {lemma}")
+        # Skip if file already exists
+        if output_path.exists():
+            print(f"[{i}/{len(words)}] Skipping {base_word} (file exists)")
+            word['Audio_Path'] = f"[sound:{filename}]"
+            generated_audio[base_word] = f"[sound:{filename}]"
+            success_count += 1
+            continue
         
-        if synthesize_audio(client, lemma, str(output_path), voice_name):
+        # Generate audio for the base word
+        print(f"[{i}/{len(words)}] Generating audio for: {base_word}")
+        
+        if synthesize_audio(client, base_word, str(output_path), voice_name):
             # Add Audio_Path in Anki format
             word['Audio_Path'] = f"[sound:{filename}]"
+            generated_audio[base_word] = f"[sound:{filename}]"
             success_count += 1
         else:
             word['Audio_Path'] = ""
@@ -241,9 +265,12 @@ def generate_audio_files(
     # Summary
     print(f"\n{'='*60}")
     print(f"✓ Audio generation complete!")
-    print(f"✓ Successfully generated: {success_count} files")
+    print(f"✓ Successfully processed: {success_count} entries")
+    print(f"✓ Unique audio files: {len(generated_audio)}")
+    if reused_count > 0:
+        print(f"🔀 Reused for polysemy: {reused_count} entries")
     if fail_count > 0:
-        print(f"⚠️  Failed: {fail_count} files")
+        print(f"⚠️  Failed: {fail_count} entries")
     print(f"✓ Updated CSV: {output_file}")
     print(f"✓ Audio directory: {audio_path.absolute()}")
     print(f"{'='*60}")
